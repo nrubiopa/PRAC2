@@ -1,0 +1,283 @@
+---
+title: "PRAC 2 Tipología y ciclo de vida de los datos"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(nortest)
+```
+
+1. descripción del dataset.
+
+El conjunto de datos de análisis de ha obtenido en Kaggle [1] y está constituido por 12 caracteristicas (columnas) que presentan 891 pasajeros (registros). El conjunto de datos contiene los siguientes campos:
+
+    PassengerId: Identificador numérico de cada pasajero
+    
+    Survived: Indica si el pasajero sobrevivió (1) o no (0) al naufragio
+    
+    Pclass: Clase en la que viajaba (1ra, 2da o 3ra)
+    
+    Name: Nombre
+    
+    Sex: Sexo
+    
+    Age: Edad
+    
+    SibSp: Número de hermanos o esposos a bordo
+    
+    Parch: Número de padres o hijos a bordo
+    
+    Ticket: Referencia del Ticket
+    
+    Fare: Tarifa
+    
+    Cabin: Cabina
+    
+    embarked: Puerto de embarque
+    
+A partir de estos datos se plantea la problematica de determinar que variables influyen más sobre la supervivencia al naufragio de un pasajero
+
+2. Integración y selección de los datos de interés a analizar.
+
+Hay campos que claramente no influyen en la supervivencia de un pasajero y por lo tanto podemos desestimar a priori. Estos son: Ticket, Fare y embarked, puesto que ni la referencia del ticket, ni su precio, ni el puerto donde embarco el pasajero influyen en el análisis por razones obvias; Cabin, porque aunque quizá la localización de la cabina pueda influir en la evacuación, ni tenemos la localización de las cabinas ni podemos asumir que los pasajeros se encontraban en ellas. Aunque el numero de parientes pueda parecer irrelevante lo dejaremos para analizar si los lazos con otros pasajeros pudieron influir en la supervivencia de cada uno. Por ultimo aunque el nombre claramente no influya lo mantenemos en el dataset para futuras visualizaciones.
+
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# Lectura de datos
+titanic <- read.csv('titanic.csv',stringsAsFactors = FALSE)
+```
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# Se eliminan los campos Ticket, Fare. Embarked. Cabin
+titanic <- select(titanic, -Ticket, - Fare, -Embarked, -Cabin)
+head(titanic)
+```
+
+3. Limpieza de datos
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# Tipo de dato asignado a cada campo
+sapply(titanic, function(x) class(x))
+```
+
+Para los test es necesario guardar las variables Sex, Pclass y Survived en variables numéricas antes de pasarlas a categorias.
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+
+titanic$SexNum <- ifelse(titanic$Sex == "male", 1, 0)
+titanic$SurvivedNum <- titanic$Survived
+titanic$PclassNum <- titanic$Pclass
+
+titanic$Survived <- factor(titanic$Survived)
+titanic$Pclass <- factor(titanic$Pclass)
+titanic$Sex <- factor(titanic$Sex)
+```
+
+3.1 Ceros y elementos vacios
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# Números de valores desconocidos por campo
+sapply(titanic, function(x) sum(is.na(x)))
+
+```
+
+https://www.kaggle.com/allohvk/titanic-missing-age-imputation-tutorial-advanced
+
+En Age encontramos un alto numero de valores vacios. Para obtener un valor adecuado nos basamos el resto de paswajeros similares para deducir una edad aproximada. Sin embargo, el resto de campos no ayudan a determinar la edad del pasajero, no estan muy relacionados. Se puede dividir los datos en grupos para obtener la edad media de los mismos y así deducir los valores vacios. Por ejemplo dividir entre hombres y mujeres obteniendo la media e introducioendola en los valores vacíos de sus respectivos grupos. Pero es preferivle obtener una división que se relacione mejor con la edad. En base a otros trabajos publicados con este dataset [2] se ha observado que en el nombre hay un indicativo para referirse a los pasajeros (Mr, Mrs, Lady, Capt...) que se ajusta mejor a la edad. Pocos pasajeros adultos no estarán casados, o por ejemplo la edad media de "Master" es 5 años. Por lo tanto se obtienen los diferentes apelativos y se obtiene la edad media de cada uno para introducirla finalmente en los valores faltantes de cada grupo
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+
+titulos <- unique(separate(separate(titanic,"Name", c("A", "B"),sep=","), "B", "titulos", sep="\\. ")[,"titulos"])
+titulos
+```
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+
+for (t in titulos){
+  p<-paste(".*",t,".*", sep="")
+  titanic[grepl(p, titanic$Name) & is.na(titanic$Age), "Age"]<-mean(titanic[grepl(p, titanic$Name) & !is.na(titanic$Age), "Age"])
+}
+
+```
+
+3.2 Identificación y tratamiento de valores extremos
+
+Para los valores categóricos se comprueba directamente si alguno de los valores no se encuentra dentro de los esperados:
+
+    Survived: 0 1
+    Pclass: 1 2 3
+    Sex: male female
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+titanic[(titanic$Survived != 1 & titanic$Survived != 0),"Survived"]
+```
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+titanic[(titanic$Pclass != 1 & titanic$Pclass != 2 & titanic$Pclass != 3), "Pclass"]
+```
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+titanic[(titanic$Sex != "male" & titanic$Sex != "female"),"Sex"]
+```
+Para el resto buscamos outliers mediante la representcion de los datos en diagramas de caja.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+boxplot(titanic$Age)
+
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+boxplot(titanic$SibSp)
+
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+boxplot(titanic$Parch)
+
+```
+A pesar de que se obtienen valores extremos ningun valor resulta imposible. Por ejemplo una familia puede tener 6 hijos pero no podría tener -1. Como no aparecen valores negativos o exageradamente altos se mantienen todos los registros.
+
+4. Análisis de datos
+
+4.1 Selección de datos y planificación de los analisis a aplicar
+
+Se agrupan los datos con el objetivo de hacer analisis mas minuciosos en el futuro.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# Agrupación por clase
+titanic.primera <- titanic[titanic$Pclass == 1, ]
+titanic.segunda <- titanic[titanic$Pclass == 2, ]
+titanic.tercera <- titanic[titanic$Pclass == 3, ]
+
+# Agrupación por Sexo
+titanic.male <- titanic[titanic$Sex == "male", ]
+titanic.female <- titanic[titanic$Sex == "female", ]
+
+# Agrupación por Edad
+
+titanic.menores <- titanic[titanic$PAge < 18, ]
+titanic.jovenes <- titanic[titanic$PAge >= 18 & titanic$Age < 36, ]
+titanic.adultos <- titanic[titanic$PAge >= 36 & titanic$Age < 65, ]
+titanic.mayores <- titanic[titanic$PAge >= 65, ]
+
+# Agrupación por parientes
+
+titanic.conParientes <- titanic[titanic$SibSp > 0 | titanic$Parch > 0, ]
+titanic.sinParientes <- titanic[titanic$SibSp == 0 & titanic$Parch == 0, ]
+```
+
+4.2 Comprobación de la normalidad y homogeneidad de la varianza
+
+Para la comprobación de que los valores que toman nuestras variables cuantitativas provienen
+de una población distribuida normalmente, utilizaremos la prueba de normalidad de AndersonDarling.
+Así, se comprueba que para que cada prueba se obtiene un p-valor superior al nivel de
+significación prefijado α = 0, 05. Si esto se cumple, entonces se considera que variable en
+cuestión sigue una distribución normal.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+
+alpha = 0.05
+col.names = colnames(titanic)
+for (i in 1:ncol(titanic)) {
+  if (i == 1) cat("Variables que no siguen una distribución normal:\n")
+    if (is.integer(titanic[,i]) | is.numeric(titanic[,i])) {
+      p_val = ad.test(titanic[,i])$p.value
+      if (p_val < alpha) {
+        cat(col.names[i])
+        
+        if (i < ncol(titanic) - 1) cat(", ")
+        if (i %% 3 == 0) cat("\n")
+      }
+    }
+  }
+
+```
+Ninguna variable sigue una distribución normal sin embargo, por el teorema central del limite, como tenemos más de 30 muestras podemos asumir normalidad.
+
+4.3 Aplicación de pruebas estaisticas
+
+Seguidamente, pasamos a estudiar la homogeneidad de varianzas mediante la aplicación de
+un test de Fligner-Killeen. En este caso, estudiaremos esta homogeneidad en cuanto a
+los grupos conformados por los hombres frente a las mujeres. En el siguiente test, la hipótesis nula consiste en que ambas varianzas son iguales.
+
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+fligner.test(SurvivedNum ~ SexNum, data = titanic)
+```
+Puesto que obtenemos un p-valor inferior a 0,005, rechazamos la hipotesis nula. Las varianzas de ambas muestras no son homogeneas.
+
+A continuación realizamos una regresión logistica con todas las variables.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# Training model
+regresionLogistica <- glm(Survived ~ Sex + Pclass + Age + SibSp + Parch, 
+                      data = titanic, 
+                      family = "binomial")
+summary(regresionLogistica)
+
+```
+Vemos que todos los campos influyen excepto Parch.
+
+A continucaión vamos a comprobar la precisión del modelo.
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+predict_reg <- predict(regresionLogistica, 
+                       titanic, type = "response")
+predict_reg <- ifelse(predict_reg >0.5, 1, 0)
+
+count(titanic[titanic$Survived == predict_reg,])/count(titanic)*100
+```
+Se obtiene una precisión del 79,46%.
+
+A continuación se va a hacer un analisis de correlación de las diferentes variables. Como se ha explicado antes se asume normalidad por el teorema central del limte.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+cor.test(titanic$SurvivedNum, titanic$SexNum)
+cor.test(titanic$SurvivedNum, titanic$PclassNum)
+cor.test(titanic$SurvivedNum, titanic$Age)
+cor.test(titanic$SurvivedNum, titanic$SibSp)
+
+```
+
+Se observa que Pclass y Age influyen mucho mas que el resto por lo tanto se puede recrear el modelo solo con estas variables
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# Training model
+regresionLogistica <- glm(Survived ~ PClass +Sex, 
+                      data = titanic, 
+                      family = "binomial")
+
+predict_reg <- predict(regresionLogistica, 
+                       titanic, type = "response")
+predict_reg <- ifelse(predict_reg >0.5, 1, 0)
+
+
+count(titanic[titanic$Survived == predict_reg,])/count(titanic)*100
+```
+
+5. Resolución del problema
+
+Observamos como en un mismo gráfico de frecuencias las variables que más afectan Sex y Pclass.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# Ahora, podemos dividir el gráfico de Embarked por Pclass:
+ggplot(data = titanic,aes(x=Pclass,fill=Survived))+geom_bar(position="fill")+facet_wrap(~Sex)
+```
+También se observa la edad en la que se ve claramente que no esta muy relacionado con la supervivencia excepto con personas mayores (que mueren todos) y recien nacidos (que sobreviven la mayoría).
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# Survival como función de age:
+ggplot(data = titanic[!is.na(titanic$Age),],aes(x=Age,fill=Survived))+geom_histogram(binwidth = 3,position="fill")+ylab("Frecuencia")
+```
+Se represnta también Patch
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+ggplot(data = titanic[!is.na(titanic$Parch),],aes(x=Parch,fill=Survived))+geom_histogram(binwidth = 3,position="fill")+ylab("Frecuencia")
+```
+A pesar de que en el analisis previo nos indicaba que este campo no influia vemos que a partir de 4 si parece influir en la supervivencia. Sin embargo, si tenemos en cuenta el numero de registros se observa que este resultado atipico se debe a que apenas hay pasajeros con estos valores.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+ggplot(data = titanic[!(is.na(titanic$Parch)),],aes(x=Parch,fill=Survived))+geom_histogram(binwidth =3)
+```
+
+6 Resolución del problema
+
+Se observa claramente que las variables que más influyeron en la supervivencia de los pasajeros fueron la clase, puesto que se priorizó a los pasajeros de clase superior y el sexo, puesto que se priorizó a las mujeres.
